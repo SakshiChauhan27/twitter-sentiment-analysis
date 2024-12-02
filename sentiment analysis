@@ -1,0 +1,151 @@
+import os
+import nltk
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
+import pandas as pd
+import re
+from textblob import TextBlob
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report
+from google.colab import files
+
+# Set NLTK data path (for Google Colab or other environments)
+nltk_data_path = '/root/nltk_data'  # Default path in Colab
+
+# Check if the path exists, and create the directory if not
+if not os.path.exists(nltk_data_path):
+    os.makedirs(nltk_data_path)
+
+# Specify the custom path explicitly
+nltk.data.path.append(nltk_data_path)
+
+# Try to find 'punkt' resource and download it if missing
+try:
+    nltk.data.find('tokenizers/punkt')
+    print("Punkt tokenizer is available!")
+except LookupError:
+    print("Punkt tokenizer is NOT available. Downloading...")
+    nltk.download('punkt', download_dir=nltk_data_path)
+
+# Try to download 'punkt_tab' resource if needed
+try:
+    nltk.data.find('tokenizers/punkt_tab')
+    print("Punkt Tab is available!")
+except LookupError:
+    print("Punkt Tab is NOT available. Downloading...")
+    nltk.download('punkt_tab', download_dir=nltk_data_path)
+
+# Download other necessary NLTK resources
+nltk.download('stopwords', download_dir=nltk_data_path)
+nltk.download('wordnet', download_dir=nltk_data_path)
+
+# Load Dataset
+uploaded = files.upload()
+filename = list(uploaded.keys())[0]
+df = pd.read_csv(filename)
+
+# Ensure the 'tweet' column exists
+if 'tweet' not in df.columns:
+    raise ValueError("The dataset must have a column named 'tweet'.")
+
+print("Dataset Loaded Successfully!")
+print(df.head())
+
+# Define text preprocessing function
+stop_words = set(stopwords.words('english'))
+lemmatizer = WordNetLemmatizer()
+
+def preprocess_text(text):
+    if not isinstance(text, str):
+        return ""
+    text = text.lower()  # Convert to lowercase
+    text = re.sub(r'@\w+', '', text)  # Remove mentions
+    text = re.sub(r'#\w+', '', text)  # Remove hashtags
+    text = re.sub(r'http\S+|www\S+', '', text)  # Remove URLs
+    text = re.sub(r'[^a-zA-Z\s]', '', text)  # Remove non-alphabetic characters
+    tokens = word_tokenize(text)
+    tokens = [lemmatizer.lemmatize(word) for word in tokens if word not in stop_words]
+    return ' '.join(tokens)  # Reconstruct text after processing
+
+# Apply preprocessing to the 'tweet' column
+df['preprocessed_text'] = df['tweet'].fillna('').apply(preprocess_text)
+
+# Display cleaned and preprocessed text samples
+print("\nCleaned and Preprocessed Tweets:")
+print(df[['tweet', 'preprocessed_text']].head())
+
+# Define a function to calculate sentiment polarity (TextBlob)
+def get_sentiment(text):
+    return TextBlob(text).sentiment.polarity
+
+# Apply the function to get sentiment polarity
+df['sentiment'] = df['preprocessed_text'].apply(get_sentiment)
+
+# Classify sentiment (Positive, Neutral, Negative)
+def classify_sentiment(polarity):
+    if polarity > 0:
+        return 'Positive'
+    elif polarity < 0:
+        return 'Negative'
+    else:
+        return 'Neutral'
+
+df['sentiment_label'] = df['sentiment'].apply(classify_sentiment)
+
+# Display processed DataFrame
+print("\nProcessed Dataset with Sentiment:")
+print(df[['tweet', 'preprocessed_text', 'sentiment', 'sentiment_label']].head())
+
+# Visualize sentiment distribution as a pie chart
+sentiment_counts = df['sentiment_label'].value_counts()
+plt.figure(figsize=(8, 8))
+sentiment_counts.plot.pie(autopct='%1.1f%%', colors=['#99ff99', '#66b3ff', '#ff9999'])
+plt.title('Sentiment Distribution of Tweets (Pie Chart)')
+plt.ylabel('')
+plt.show()
+
+# Prepare data for machine learning
+vectorizer = TfidfVectorizer(max_features=1000)
+X = vectorizer.fit_transform(df['preprocessed_text'])
+
+le = LabelEncoder()
+y = le.fit_transform(df['sentiment_label'])
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Train ML model
+model = LogisticRegression(max_iter=500)
+model.fit(X_train, y_train)
+
+# Evaluate model
+y_pred = model.predict(X_test)
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred, target_names=le.classes_))
+
+# Interactive analysis for user-provided tweets
+def analyze_tweet(tweet):
+    if not tweet.strip():
+        return "Invalid tweet. Please enter non-empty text."
+    cleaned_tweet = preprocess_text(tweet)
+    features = vectorizer.transform([cleaned_tweet])
+    sentiment = model.predict(features)
+    return le.inverse_transform(sentiment)[0]
+
+# Allow users to input their own tweet for analysis
+while True:
+    user_tweet = input("\nEnter a tweet to analyze sentiment (or type 'exit' to quit): ")
+    if user_tweet.lower() == 'exit':  # Ensure correct indentation here
+        break
+    sentiment_result = analyze_tweet(user_tweet)
+    print(f"Predicted Sentiment: {sentiment_result}")
+
+# Full dataset preview (Optional)
+print("\nFull Dataset Preview:")
+print(df[['tweet', 'preprocessed_text', 'sentiment', 'sentiment_label']].head(100))
