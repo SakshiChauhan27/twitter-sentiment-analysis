@@ -1,0 +1,171 @@
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+import joblib
+
+class CricketWinPredictor:
+    def __init__(self):
+        self.model = None
+        self.encoder_team = LabelEncoder()
+        self.encoder_batsman = LabelEncoder()
+        self.encoder_bowler = LabelEncoder()
+        self.encoder_venue = LabelEncoder()
+        self.scaler = StandardScaler()
+
+    def clean_csv(self, input_path, output_path, expected_columns):
+        with open(input_path, 'r') as infile, open(output_path, 'w') as outfile:
+            for line in infile:
+                if len(line.split(',')) == expected_columns:
+                    outfile.write(line)
+
+    def load_and_prepare_data(self, deliveries_path, matches_path):
+        # Clean the CSV files
+        self.clean_csv(deliveries_path, 'cleaned_deliveries.csv', 21)  # Adjust 21 based on expected columns
+        self.clean_csv(matches_path, 'cleaned_matches.csv', 15)  # Adjust 15 based on expected columns
+
+        # Load cleaned data
+        deliveries = pd.read_csv('cleaned_deliveries.csv')
+        matches = pd.read_csv('cleaned_matches.csv')
+
+        # Merge dataframes on 'id'
+        merged_data = deliveries.merge(matches, left_on='match_id', right_on='id')
+
+        # Select required features and target
+        features = merged_data[['batting_team', 'bowling_team', 'over', 'ball', 'batsman',
+                                'bowler', 'total_runs', 'venue']]
+        target = merged_data['winner']
+
+        # Encode categorical features
+        features['batting_team'] = self.encoder_team.fit_transform(features['batting_team'])
+        features['bowling_team'] = self.encoder_team.transform(features['bowling_team'])
+        features['batsman'] = self.encoder_batsman.fit_transform(features['batsman'])
+        features['bowler'] = self.encoder_bowler.fit_transform(features['bowler'])
+        features['venue'] = self.encoder_venue.fit_transform(features['venue'])
+
+        # Normalize numerical columns
+        features[['over', 'ball', 'total_runs']] = self.scaler.fit_transform(features[['over', 'ball', 'total_runs']])
+
+        # Encode target labels
+        target = self.encoder_team.fit_transform(target)
+
+        return features, target
+
+    def train_model(self, features, target):
+        features_subset = features.sample(n=5000, random_state=42)  # Randomly select 5000 rows
+        target_subset = target[features_subset.index]
+
+        # Split data into training and test sets
+        X_train, X_test, y_train, y_test = train_test_split(features_subset, target_subset, test_size=0.2, random_state=42)
+        self.model = LogisticRegression(max_iter=1000)
+        self.model.fit(X_train, y_train)
+        predictions = self.model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        print(f"Model Accuracy: {accuracy:.2f}")
+        joblib.dump(self.model, 'ipl_win_probability_model.pkl')
+        joblib.dump(self.encoder_team, 'encoder_team.pkl')
+        joblib.dump(self.encoder_batsman, 'encoder_batsman.pkl')
+        joblib.dump(self.encoder_bowler, 'encoder_bowler.pkl')
+        joblib.dump(self.encoder_venue, 'encoder_venue.pkl')
+        joblib.dump(self.scaler, 'scaler.pkl')
+        print("Model and encoders saved.")
+
+    def load_model(self, model_path, encoder_team_path, encoder_batsman_path, encoder_bowler_path, encoder_venue_path, scaler_path):
+        self.model = joblib.load(model_path)
+        self.encoder_team = joblib.load(encoder_team_path)
+        self.encoder_batsman = joblib.load(encoder_batsman_path)
+        self.encoder_bowler = joblib.load(encoder_bowler_path)
+        self.encoder_venue = joblib.load(encoder_venue_path)
+        self.scaler = joblib.load(scaler_path)
+        print("Model and encoders loaded successfully.")
+
+    def show_available_teams_and_players(self):
+        print("\nAvailable Teams (Batting/Bowling):")
+        for idx, team in enumerate(self.encoder_team.classes_, 1):
+            print(f"{idx}. {team}")
+
+        print("\nAvailable Batsmen:")
+        for idx, batsman in enumerate(self.encoder_batsman.classes_, 1):
+            print(f"{idx}. {batsman}")
+
+        print("\nAvailable Bowlers:")
+        for idx, bowler in enumerate(self.encoder_bowler.classes_, 1):
+            print(f"{idx}. {bowler}")
+
+        print("\nAvailable Venues:")
+        for idx, venue in enumerate(self.encoder_venue.classes_, 1):
+            print(f"{idx}. {venue}")
+
+    def handle_unseen_label(self, encoder, value):
+        if np.isin(value, encoder.classes_):
+            return encoder.transform([value])[0]
+        else:
+            print(f"Warning: '{value}' is not in the encoder classes, using default value.")
+            return encoder.transform([encoder.classes_[0]])[0]
+
+    def predict_win_probability(self):
+        self.show_available_teams_and_players()
+        print("\nEnter Match Details for Prediction:")
+
+        while True:
+            try:
+                batting_team_idx = int(input("Enter batting team (1-27): ")) - 1
+                bowling_team_idx = int(input("Enter bowling team (1-27): ")) - 1
+                batsman_idx = int(input("Enter batsman (1-516): ")) - 1
+                bowler_idx = int(input("Enter bowler (1-405): ")) - 1
+                venue_idx = int(input("Enter venue (1-41): ")) - 1
+                current_score = int(input("Enter the current score: "))
+                wickets_out = int(input("Enter the wickets out: "))
+                target = int(input("Enter the target score: "))
+                overs_completed = float(input("Enter the overs completed (e.g., 10.0): "))
+
+                if any(idx < 0 or idx >= len(encoder.classes_) for idx, encoder in zip(
+                        [batting_team_idx, bowling_team_idx, batsman_idx, bowler_idx, venue_idx],
+                        [self.encoder_team, self.encoder_team, self.encoder_batsman, self.encoder_bowler, self.encoder_venue])):
+                    raise ValueError("One or more indices are out of range. Please try again.")
+
+                break
+            except ValueError as e:
+                print(f"Invalid input: {e}. Please re-enter all details.")
+
+        batting_team = self.encoder_team.classes_[batting_team_idx]
+        bowling_team = self.encoder_team.classes_[bowling_team_idx]
+        batsman = self.encoder_batsman.classes_[batsman_idx]
+        bowler = self.encoder_bowler.classes_[bowler_idx]
+        venue = self.encoder_venue.classes_[venue_idx]
+
+        batting_team_encoded = self.handle_unseen_label(self.encoder_team, batting_team)
+        bowling_team_encoded = self.handle_unseen_label(self.encoder_team, bowling_team)
+        batsman_encoded = self.handle_unseen_label(self.encoder_batsman, batsman)
+        bowler_encoded = self.handle_unseen_label(self.encoder_bowler, bowler)
+        venue_encoded = self.handle_unseen_label(self.encoder_venue, venue)
+
+        sample_input = pd.DataFrame([[batting_team_encoded, bowling_team_encoded, overs_completed, 0,
+                                      batsman_encoded, bowler_encoded, 0, venue_encoded]],
+                                    columns=['batting_team', 'bowling_team', 'over', 'ball', 'batsman', 'bowler', 'total_runs', 'venue'])
+
+        sample_input[['over', 'ball', 'total_runs']] = self.scaler.transform(sample_input[['over', 'ball', 'total_runs']])
+
+        prediction_batting_team = self.model.predict_proba(sample_input)[:, 1][0] * 100
+        prediction_bowling_team = 100 - prediction_batting_team
+
+        print(f"\nWin Probability for Batting Team ({batting_team}): {prediction_batting_team:.2f}%")
+        print(f"Win Probability for Bowling Team ({bowling_team}): {prediction_bowling_team:.2f}%")
+
+        if prediction_batting_team > prediction_bowling_team:
+            print(f"The likely winner is {batting_team} and the opposition is {bowling_team}.")
+        else:
+            print(f"The likely winner is {bowling_team} and the opposition is {batting_team}.")
+
+if __name__ == "__main__":
+    predictor = CricketWinPredictor()
+
+    deliveries_path = "deliveries.csv"
+    matches_path = "matches.csv"
+    features, target = predictor.load_and_prepare_data(deliveries_path, matches_path)
+    predictor.train_model(features, target)
+
+    predictor.load_model('ipl_win_probability_model.pkl', 'encoder_team.pkl', 'encoder_batsman.pkl', 'encoder_bowler.pkl', 'encoder_venue.pkl', 'scaler.pkl')
+    predictor.predict_win_probability()
